@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>東京 終電逃し避難スポットDB</title>
+
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8398161859137802" crossorigin="anonymous"></script>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1020;color:#fff;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{padding:28px 16px;text-align:center;background:linear-gradient(135deg,#020617,#1d4ed8,#06b6d4)}
+header h1{margin:0;font-size:30px;letter-spacing:.03em}
+header p{margin:10px 0 0;color:#dbeafe;line-height:1.7}
+.wrap{max-width:1200px;margin:auto;padding:16px}.grid{display:grid;grid-template-columns:390px 1fr;gap:16px}
+.panel{background:#111827;border-radius:18px;padding:16px;border:1px solid rgba(255,255,255,.12);box-shadow:0 16px 40px rgba(0,0,0,.25)}
+label{display:block;margin:10px 0 6px;font-weight:800;color:#e0f2fe}input,select,textarea{width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:#020617;color:#fff;outline:none}input:focus,select:focus,textarea:focus{border-color:#38bdf8}
+button{border:0;border-radius:12px;padding:11px 14px;background:#0284c7;color:#fff;font-weight:800;cursor:pointer}button:hover{filter:brightness(1.08)}button.secondary{background:#475569}button.danger{background:#dc2626}.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+#map{height:640px;border-radius:18px;background:#334155}.results{display:grid;gap:10px;max-height:575px;overflow:auto;margin-top:12px;padding-right:4px}.spot{background:#020617;border:1px solid rgba(255,255,255,.1);border-radius:15px;padding:13px}.spot h3{margin:0 0 6px;color:#7dd3fc;font-size:17px}.spot p{margin:6px 0}.tag{display:inline-block;background:#334155;padding:4px 8px;border-radius:999px;font-size:12px;margin:2px}.score{display:inline-block;background:#075985;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:800;margin:2px}.open{background:#166534}.price{background:#7c2d12}.small{font-size:13px;color:#cbd5e1;line-height:1.7}#dataBox{display:none}textarea{min-height:200px;font-family:Consolas,monospace}.note{background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.25);border-radius:12px;padding:10px;margin-top:12px;color:#e0f2fe}
+@media(max-width:900px){.grid{grid-template-columns:1fr}#map{height:430px}header h1{font-size:24px}}
+</style>
+</head>
+<body>
+<header>
+<h1>東京 終電逃し避難スポットDB</h1>
+<p>深夜に休める場所・始発待ちスポットを地図で探せるDB</p>
+</header>
+
+<main class="wrap">
+<div class="grid">
+<section class="panel">
+<label>エリア</label><select id="areaMode"></select>
+<label>ジャンル</label><select id="typeMode"></select>
+<label>検索</label><input id="keyword" placeholder="例：新宿 サウナ 24時間 シャワー 安い">
+<div class="btns"><button onclick="applySearch()">検索</button><button class="secondary" onclick="showData()">CSV</button><button class="secondary" onclick="showResults()">結果</button><button class="danger" onclick="resetSpots()">初期化</button></div>
+<p id="status" class="small"></p>
+<div class="note small">CSVをGoogleスプレッドシートで公開して、CSV_URLにURLを入れると自動反映できます。</div>
+<div id="resultsBox" class="results"></div>
+<div id="dataBox">
+<p class="small">CSV形式：<br>id,name,area,type,address,lat,lng,price,open,tags,memo</p>
+<textarea id="csvInput"></textarea>
+<div class="btns"><button onclick="applyCsv()">CSV反映</button><button class="secondary" onclick="exportCsv()">CSV出力</button></div>
+<textarea id="jsonBox"></textarea>
+</div>
+</section>
+<section class="panel"><div id="map"></div></section>
+</div>
+</main>
+
+<script>
+const STORAGE_KEY = "tokyo_last_train_shelter_db_v1";
+
+/* ここにGoogleスプレッドシートのCSV公開URLを入れる */
+const CSV_URL = "";
+const MAX_INITIAL_DISPLAY = 200;
+
+const DEFAULT_SPOTS = [
+{id:"shelter_001",name:"安心お宿 新宿駅前店",area:"新宿",type:"カプセルホテル",address:"東京都新宿区新宿4-2-10",lat:35.6887,lng:139.7024,price:"やや高め",open:"24時間",tags:["始発待ち","仮眠","シャワー","駅近"],memo:"終電後にしっかり寝たい人向け"},
+{id:"shelter_002",name:"テルマー湯 新宿店",area:"新宿",type:"温浴施設",address:"東京都新宿区歌舞伎町1-1-2",lat:35.6937,lng:139.7051,price:"高め",open:"深夜利用可",tags:["風呂","サウナ","休憩","女性も使いやすい"],memo:"風呂・休憩重視の避難先"},
+{id:"shelter_003",name:"快活CLUB 新宿駅西口店",area:"新宿",type:"ネットカフェ",address:"東京都新宿区西新宿1丁目",lat:35.6912,lng:139.6988,price:"普通",open:"24時間",tags:["個室","充電","シャワー","漫画"],memo:"仮眠と充電の定番"},
+{id:"shelter_004",name:"カスタマカフェ 歌舞伎町店",area:"新宿",type:"ネットカフェ",address:"東京都新宿区歌舞伎町1丁目",lat:35.6945,lng:139.7039,price:"普通",open:"24時間",tags:["個室","シャワー","駅近"],memo:"歌舞伎町側で探す時の候補"},
+{id:"shelter_005",name:"カプセルホテル＆サウナ 池袋プラザ",area:"池袋",type:"カプセルホテル",address:"東京都豊島区池袋2-12-3",lat:35.7328,lng:139.7066,price:"普通",open:"24時間",tags:["仮眠","サウナ","男性向け"],memo:"池袋西口側の避難候補"},
+{id:"shelter_006",name:"快活CLUB 池袋東口駅前店",area:"池袋",type:"ネットカフェ",address:"東京都豊島区東池袋1丁目",lat:35.7296,lng:139.7130,price:"普通",open:"24時間",tags:["個室","充電","シャワー","駅近"],memo:"始発待ち向け"},
+{id:"shelter_007",name:"安心お宿 秋葉原電気街店",area:"秋葉原",type:"カプセルホテル",address:"東京都千代田区外神田1-2-12",lat:35.6975,lng:139.7713,price:"やや高め",open:"24時間",tags:["仮眠","大浴場","駅近"],memo:"秋葉原周辺で寝たい時に便利"},
+{id:"shelter_008",name:"RAKU SPA 1010 神田",area:"神田",type:"温浴施設",address:"東京都千代田区神田淡路町2-9-9",lat:35.6973,lng:139.7670,price:"普通",open:"深夜利用可",tags:["風呂","休憩","サウナ","漫画"],memo:"秋葉原・御茶ノ水からも使いやすい"},
+{id:"shelter_009",name:"カプセルイン大塚",area:"大塚",type:"カプセルホテル",address:"東京都豊島区北大塚2-15-10",lat:35.7313,lng:139.7286,price:"普通",open:"24時間",tags:["仮眠","サウナ","駅近"],memo:"山手線沿いの避難候補"},
+{id:"shelter_010",name:"カラオケまねきねこ 渋谷本店",area:"渋谷",type:"カラオケ",address:"東京都渋谷区道玄坂2丁目",lat:35.6595,lng:139.6980,price:"安め",open:"店舗により異なる",tags:["複数人","時間つぶし","充電"],memo:"寝るより時間つぶし向け"}
+];
+
+let spots=[];let filteredSpots=[];let map;let markers=[];
+
+async function init(){
+  spots = await loadSpots();
+  map = L.map("map").setView([35.681236,139.767125],11);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap contributors"}).addTo(map);
+  document.getElementById("areaMode").addEventListener("change",applySearch);
+  document.getElementById("typeMode").addEventListener("change",applySearch);
+  document.getElementById("keyword").addEventListener("input",applySearch);
+  buildFilters();
+  applySearch();
+}
+
+async function loadSpots(){
+  try{
+    const local = localStorage.getItem(STORAGE_KEY);
+    if(local) return JSON.parse(local);
+    if(CSV_URL){
+      const res = await fetch(CSV_URL);
+      const text = await res.text();
+      const csvData = parseCsv(text);
+      if(csvData.length) return csvData;
+    }
+  }catch(e){console.error(e)}
+  return DEFAULT_SPOTS;
+}
+
+function saveLocal(){localStorage.setItem(STORAGE_KEY,JSON.stringify(spots));}
+
+function parseCsv(text){
+  const lines = text.trim().split(/\r?\n/);
+  if(lines.length < 2) return [];
+  const data=[];
+  for(let i=1;i<lines.length;i++){
+    const row = splitCsvLine(lines[i]);
+    if(row.length < 8) continue;
+    data.push({
+      id:row[0],name:row[1],area:row[2],type:row[3],address:row[4],
+      lat:Number(row[5]),lng:Number(row[6]),price:row[7]||"",open:row[8]||"",
+      tags:(row[9]||"").split("|").filter(Boolean),memo:row[10]||""
+    });
+  }
+  return data.filter(x=>x.name && !Number.isNaN(x.lat) && !Number.isNaN(x.lng));
+}
+
+function splitCsvLine(line){
+  const out=[];let cur="";let q=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"' && line[i+1]==='"'){cur+='"';i++;continue;}
+    if(c==='"'){q=!q;continue;}
+    if(c===',' && !q){out.push(cur);cur="";continue;}
+    cur+=c;
+  }
+  out.push(cur);return out;
+}
+
+function csvEscape(v){
+  v = String(v ?? "");
+  return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v;
+}
+
+function buildFilters(){
+  const areaSelect=document.getElementById("areaMode");
+  const typeSelect=document.getElementById("typeMode");
+  const areas=[...new Set(spots.map(x=>x.area).filter(Boolean))].sort();
+  const types=[...new Set(spots.map(x=>x.type).filter(Boolean))].sort();
+  areaSelect.innerHTML='<option value="all">東京全体</option>'+areas.map(a=>`<option value="${a}">${a}</option>`).join("");
+  typeSelect.innerHTML='<option value="all">すべて</option>'+types.map(t=>`<option value="${t}">${t}</option>`).join("");
+}
+
+function applySearch(){
+  const area=document.getElementById("areaMode").value;
+  const type=document.getElementById("typeMode").value;
+  const kw=document.getElementById("keyword").value.toLowerCase().trim();
+  let results=spots.filter(s=>{
+    const text=[s.name,s.area,s.type,s.address,s.price,s.open,(s.tags||[]).join(" "),s.memo].join(" ").toLowerCase();
+    return (area==="all"||s.area===area) && (type==="all"||s.type===type) && (!kw||text.includes(kw));
+  });
+  filteredSpots=results.slice(0,MAX_INITIAL_DISPLAY);
+  renderResults();renderMarkers();
+  document.getElementById("status").textContent=`${filteredSpots.length}件表示 / 該当${results.length}件`;
+}
+
+function renderResults(){
+  const box=document.getElementById("resultsBox");
+  if(!filteredSpots.length){box.innerHTML="該当なし";return;}
+  box.innerHTML=filteredSpots.map((s,i)=>`
+    <div class="spot">
+      <h3>${i+1}. ${escapeHtml(s.name)}</h3>
+      <p class="small">${escapeHtml(s.address)}</p>
+      <p><span class="score">${escapeHtml(s.type||"避難先")}</span><span class="tag">${escapeHtml(s.area)}</span><span class="price">${escapeHtml(s.price||"料金不明")}</span><span class="open">${escapeHtml(s.open||"営業時間確認")}</span></p>
+      <p>${(s.tags||[]).map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join("")}</p>
+      <p class="small">${escapeHtml(s.memo||"")}</p>
+      <div class="btns"><button class="secondary" onclick="focusSpot('${s.id}')">地図</button><button onclick="openGoogle('${s.id}')">GoogleMap</button></div>
+    </div>`).join("");
+}
+
+function renderMarkers(){
+  markers.forEach(m=>m.remove());markers=[];
+  filteredSpots.forEach(s=>{
+    const marker=L.marker([s.lat,s.lng]).addTo(map);marker.spotId=s.id;
+    marker.bindPopup(`<b>${escapeHtml(s.name)}</b><br>${escapeHtml(s.type)}<br>${escapeHtml(s.open||"")}`);
+    markers.push(marker);
+  });
+}
+
+function focusSpot(id){
+  const s=spots.find(x=>x.id===id);if(!s)return;
+  map.setView([s.lat,s.lng],16);
+  const m=markers.find(x=>x.spotId===id);if(m)m.openPopup();
+}
+function openGoogle(id){
+  const s=spots.find(x=>x.id===id);if(!s)return;
+  window.open("https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(s.name+" "+s.address),"_blank");
+}
+function applyCsv(){
+  const raw=document.getElementById("csvInput").value;
+  const parsed=parseCsv(raw);
+  if(!parsed.length){alert("CSVを読み込めませんでした");return;}
+  spots=parsed;saveLocal();buildFilters();applySearch();showResults();
+}
+function exportCsv(){
+  const header="id,name,area,type,address,lat,lng,price,open,tags,memo";
+  const rows=spots.map(s=>[s.id,s.name,s.area,s.type,s.address,s.lat,s.lng,s.price,s.open,(s.tags||[]).join("|"),s.memo].map(csvEscape).join(","));
+  document.getElementById("csvInput").value=[header,...rows].join("\n");
+  document.getElementById("jsonBox").value=JSON.stringify(spots,null,2);
+}
+function resetSpots(){localStorage.removeItem(STORAGE_KEY);spots=DEFAULT_SPOTS;buildFilters();applySearch();}
+function showData(){document.getElementById("dataBox").style.display="block";document.getElementById("resultsBox").style.display="none";exportCsv();}
+function showResults(){document.getElementById("dataBox").style.display="none";document.getElementById("resultsBox").style.display="grid";}
+function escapeHtml(str){return String(str??"").replace(/[&<>'"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[m]));}
+window.addEventListener("load",init);
+</script>
+
+<div style="max-width:1200px;margin:30px auto;padding:0 16px;">
+<ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-8398161859137802" data-ad-slot="5599163841" data-ad-format="auto" data-full-width-responsive="true"></ins>
+<script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+</div>
+<script defer src="/_vercel/speed-insights/script.js"></script>
+<script defer src="/_vercel/insights/script.js"></script>
+</body>
+</html>
